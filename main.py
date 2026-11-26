@@ -45,14 +45,38 @@ def validate(text):
     return True
 
 
+def atomic_write(path, data):
+    """Write data to path atomically: temp file in the same directory,
+    fsync, byte-length check, then rename -- so a crash mid-write never
+    leaves a truncated entry.txt behind."""
+    import tempfile
+
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".entry-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.getsize(tmp_path) != len(data):
+            raise OSError(
+                f"temp file is {os.path.getsize(tmp_path)} bytes, "
+                f"expected {len(data)}"
+            )
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
 def main():
     validate(SENTENCE)
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "entry.txt")
     data = SENTENCE.encode("utf-8")
-    with open(path, "wb") as f:
-        f.write(data)
+    atomic_write(path, data)
     with open(path, "rb") as f:
         round_trip = f.read()
     if round_trip != data:
